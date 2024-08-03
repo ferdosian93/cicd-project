@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1  
+kind: Ingress
+metadata:
+    name: $CI_PROJECT_NAME-ingress
+    namespace: $PROD_NAMESPACE
+spec:
+    ingressClassName: nginx
+    rules:
+        - host: $ING_HOST
+          http:
+              paths:
+                  - backend:
+                        service:
+                            name: $CI_PROJECT_NAME
+                            port:
+                                number: 
+                    path: 
+                    pathType: ImplementationSpecific

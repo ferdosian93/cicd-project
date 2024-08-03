@@ -1,0 +1,7 @@
+FROM harbor.tasn.ir/library/docker-base-images/debian-instantclient:12 as builder
+RUN cp /usr/share/zoneinfo/Asia/Tehran /etc/localtime
+WORKDIR -p /post-services/assets
+ADD assets .
+WORKDIR ../
+COPY ./bin/post-services.out .
+ENTRYPOINT ["./post-services.out"]

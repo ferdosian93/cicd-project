@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: $CI_PROJECT_NAME
+    app.ap.deploy: $CI_PROJECT_NAME
+    version: $CI_COMMIT_TAG
+  name: $CI_PROJECT_NAME
+  namespace: $K8S_NAMESPACE
+spec:
+  replicas: $RPL
+  revisionHistoryLimit: $REV_HIST_LIM
+  selector:
+    matchLabels:
+      app.ap.deploy: $CI_PROJECT_NAME
+  template:
+    metadata:
+      annotations:
+        prometheus.io/port: "9000"
+        prometheus.io/scrape: "true"
+        traffic.sidecar.istio.io/excludeOutboundIPRanges: 192.168.71.0/24
+        traffic.sidecar.istio.io/excludeOutboundPorts: 6379, 6380, 27017, 1521, 1433, 3306, 5432
+        proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+      labels:
+        app: $CI_PROJECT_NAME
+        app.ap.deploy: $CI_PROJECT_NAME
+        version: $CI_COMMIT_TAG
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.ap.deploy
+                    operator: In
+                    values:
+                      - $CI_PROJECT_NAME
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - env:
+            - name: SERVER_DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  key: SERVER_DATABASE_USER-SEC
+                  name: $CI_PROJECT_NAME-sec
+            - name: SERVER_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: SERVER_DATABASE_PASSWORD-SEC
+                  name: $CI_PROJECT_NAME-sec
+            - name: SERVER_DATABASE_URI
+              valueFrom:
+                secretKeyRef:
+                  key: SERVER_DATABASE_URI-SEC
+                  name: $CI_PROJECT_NAME-sec
+            - name: SERVER_POST_USER
+              valueFrom:
+                secretKeyRef:
+                  key: SERVER_POST_USER-SEC
+                  name: $CI_PROJECT_NAME-sec
+            - name: SERVER_POST_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: SERVER_POST_PASSWORD-SEC
+                  name: $CI_PROJECT_NAME-sec
+          envFrom:
+            - configMapRef:
+                name: $CI_PROJECT_NAME-cm
+          image: $REGISTRY_URL/$CI_PROJECT_PATH:$CI_COMMIT_TAG
+          imagePullPolicy: "IfNotPresent"
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 10
+            periodSeconds: 2
+            successThreshold: 1
+            tcpSocket:
+              port: 1200
+            timeoutSeconds: 2
+          name: $CI_PROJECT_NAME
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 10
+            periodSeconds: 2
+            successThreshold: 1
+            tcpSocket:
+              port: 1200
+            timeoutSeconds: 2
+          resources:
+            limits:
+              cpu: "$RSRC_CPU_LIM"
+              memory: "$RSRC_MEM_LIM"
+            requests:
+              cpu: "$RSRC_CPU_REQ"
+              memory: "$RSRC_MEM_REQ"
+      imagePullSecrets:
+        - name: $CI_PROJECT_NAME-reg
+      restartPolicy: Always

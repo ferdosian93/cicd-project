@@ -1,0 +1,169 @@
+stages:
+  - svc-build
+  - docker-build
+  - dev-release
+  - stage-release
+  - prod-release
+  - notification
+
+before_script:
+  - date
+Service Build:
+  stage: svc-build
+  image: harbor.tasn.ir/library/docker-base-images/golang:1.20-pack
+  variables:
+    GOSUMDB: "off"
+    GONOSUMDB: "gitlab.tasn.ir"
+    GOPROXY: "http://goproxy.tasn.ir"
+    GONOPROXY: "gitlab.tasn.ir"
+    GOPRIVATE: "gitlab.tasn.ir"
+    GOCACHE: "$CI_PROJECT_DIR/.cache"
+  before_script:
+    - echo "machine gitlab.tasn.ir login $PLATFORM_USER password $PLATFORM_TOKEN" > ~/.netrc
+  script:
+    - go mod tidy && go mod download
+    - CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o $CI_PROJECT_DIR/bin/post-services.out $CI_PROJECT_DIR/cmd/main.go
+  artifacts:
+    paths:
+      - $CI_PROJECT_DIR/bin/post-services.out
+      - $CI_PROJECT_DIR/locale
+    expire_in: 6h
+  cache:
+    paths:
+      - $GOCACHE
+  only:
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[d][e][v]$/
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[s][t][a][g][e]$/
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[r][e][l][e][a][s][e]$/
+  tags:
+    - build
+Docker Build:
+  stage: docker-build
+  image: $PREG/docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker info
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker build -f $CI_PROJECT_DIR/$DOCKERFILE_PATH_CACHE -t "$CI_REGISTRY_IMAGE":"$CI_COMMIT_TAG" .
+    - docker push "$CI_REGISTRY_IMAGE":"$CI_COMMIT_TAG"
+  only:
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[d][e][v]$/
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[s][t][a][g][e]$/
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[r][e][l][e][a][s][e]$/
+  tags:
+    - build
+Development Release:
+  stage: dev-release
+  image: $PREG/docker-base-images/kuberunner:v1
+  before_script:
+    - eval $(cat $ENVF_DEV | sed 's/^/export /')
+    - sed -i -e 's/="/:\ "/' $ENVF_DEV
+    - echo "TAG:"" $CI_COMMIT_TAG"
+    - mkdir "$CD_TMP"
+    - export K8S_NAMESPACE=ap-$(echo "$CI_PROJECT_NAMESPACE" | rev | cut -d "/" -f1 | rev)
+  script:
+    - cat $ENVF_DEV >> ci/k8s/$CI_PROJECT_NAME-configmap.yaml
+    # Changes ENV for mobapp
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-configmap.yaml > $CD_TMP/$CI_PROJECT_NAME-configmap.yaml
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-deployment.yaml > $CD_TMP/$CI_PROJECT_NAME-deployment.yaml
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-service.yaml > $CD_TMP/$CI_PROJECT_NAME-service.yaml
+    # kubernetes File Validation
+    - cat $CD_TMP/*
+    - kubeval  $CD_TMP/* && echo "Kuber files Approved" || exit 1
+    # GIT PUSH
+    - git clone https://$DEPLOY_USER:$DEPLOY_TOKEN@$DEPLOY_PURL_AP_DEV --branch=master $CICD_TMP
+    - cd $CICD_TMP
+    - git config --global user.email "$GITLAB_USER_EMAIL" && git config --global user.name "$GITLAB_USER_LOGIN"
+
+    # Update post-services k8s manifests
+    - rm -rf "$CI_PROJECT_NAME/$LATEST" "$CI_PROJECT_NAME/$CI_COMMIT_TAG"
+    - mkdir -p "$CI_PROJECT_NAME/$LATEST" "$CI_PROJECT_NAME/$CI_COMMIT_TAG"
+    - cp -a $CI_PROJECT_DIR/$CD_TMP/*.yaml "$CI_PROJECT_NAME"/"$LATEST"/ && cp -a $CI_PROJECT_DIR/$CD_TMP/*.yaml "$CI_PROJECT_NAME"/"$CI_COMMIT_TAG"/
+    - git add . && git commit -m "$CI_COMMIT_TAG" && git push origin master
+
+
+  dependencies:
+    - Docker Build
+  only:
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[d][e][v]$/
+  tags:
+    - build
+Stage Release:
+  stage: stage-release
+  image: $PREG/docker-base-images/kuberunner:v1
+  before_script:
+    - eval $(cat $ENVF_STAGE | sed 's/^/export /')
+    - sed -i -e 's/="/:\ "/' $ENVF_STAGE
+    - echo "TAG:"" $CI_COMMIT_TAG"
+    - mkdir "$CD_TMP"
+    - export K8S_NAMESPACE=ap-$(echo "$CI_PROJECT_NAMESPACE" | rev | cut -d "/" -f1 | rev)
+  script:
+    - cat $ENVF_STAGE >> ci/k8s/$CI_PROJECT_NAME-configmap.yaml
+    # Changes ENV for mobapp
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-configmap.yaml > $CD_TMP/$CI_PROJECT_NAME-configmap.yaml
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-deployment.yaml > $CD_TMP/$CI_PROJECT_NAME-deployment.yaml
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-service.yaml > $CD_TMP/$CI_PROJECT_NAME-service.yaml
+    # kubernetes File Validation
+    - kubeval  $CD_TMP/* && echo "Kuber files Approved" || exit 1
+    # GIT PUSH
+    - git clone https://$DEPLOY_USER:$DEPLOY_TOKEN@$DEPLOY_PURL_AP_STAGE --branch=master $CICD_TMP
+    - cd $CICD_TMP
+    - git config --global user.email "$GITLAB_USER_EMAIL" &&  git config --global user.name "$GITLAB_USER_LOGIN"
+    # Update post-services k8s manifests
+    - rm -rf "$CI_PROJECT_NAME/$LATEST" "$CI_PROJECT_NAME/$CI_COMMIT_TAG"
+    - mkdir -p "$CI_PROJECT_NAME/$LATEST" "$CI_PROJECT_NAME/$CI_COMMIT_TAG"
+    - cp -a $CI_PROJECT_DIR/$CD_TMP/*.yaml "$CI_PROJECT_NAME"/"$LATEST"/ && cp -a $CI_PROJECT_DIR/$CD_TMP/*.yaml "$CI_PROJECT_NAME"/"$CI_COMMIT_TAG"/
+    - git add . && git commit -m "$CI_COMMIT_TAG" && git push origin master
+
+
+  dependencies:
+    - Docker Build
+  only:
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[s][t][a][g][e]$/
+  tags:
+    - build
+Production Release:
+  stage: prod-release
+  image: $PREG/docker-base-images/kuberunner:v1
+  before_script:
+    - eval $(cat $ENVF_PROD | sed 's/^/export /')
+    - sed -i -e 's/="/:\ "/' $ENVF_PROD
+    - echo "TAG:"" $CI_COMMIT_TAG"
+    - mkdir "$CD_TMP"
+    - export K8S_NAMESPACE=$(echo "$CI_PROJECT_NAMESPACE" | rev | cut -d "/" -f1 | rev)
+  script:
+    - cat $ENVF_PROD >> ci/k8s/$CI_PROJECT_NAME-configmap.yaml
+    # Changes ENV for mobapp
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-configmap.yaml > $CD_TMP/$CI_PROJECT_NAME-configmap.yaml
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-deployment.yaml > $CD_TMP/$CI_PROJECT_NAME-deployment.yaml
+    - envsubst < ci/k8s/$CI_PROJECT_NAME-service.yaml > $CD_TMP/$CI_PROJECT_NAME-service.yaml
+    # kubernetes File Validation
+    - kubeval  $CD_TMP/* && echo "Kuber files Approved" || exit 1
+    # GIT PUSH
+    - git clone https://$DEPLOY_USER:$DEPLOY_TOKEN@$DEPLOY_PURL_AP_PROD --branch=master $CICD_TMP
+    - cd $CICD_TMP
+    - git config --global user.email "$GITLAB_USER_EMAIL" &&  git config --global user.name "$GITLAB_USER_LOGIN"
+    # Update post-services k8s manifests
+    - rm -rf "$CI_PROJECT_NAME/$LATEST" "$CI_PROJECT_NAME/$CI_COMMIT_TAG"
+    - mkdir -p "$CI_PROJECT_NAME/$LATEST" "$CI_PROJECT_NAME/$CI_COMMIT_TAG"
+    - cp -a $CI_PROJECT_DIR/$CD_TMP/*.yaml "$CI_PROJECT_NAME"/"$LATEST"/ && cp -a $CI_PROJECT_DIR/$CD_TMP/*.yaml "$CI_PROJECT_NAME"/"$CI_COMMIT_TAG"/
+    - git add . && git commit -m "$CI_COMMIT_TAG" && git push origin master
+
+
+  dependencies:
+    - Docker Build
+  only:
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[r][e][l][e][a][s][e]$/
+  tags:
+    - build
+Notification:
+  stage: notification
+  image: $PREG/docker-base-images/kuberunner:v1
+  script:
+    - ROCKET_HOOK='{"alias":"Gitlab Post","emoji":":raccoon:","text":"Group:#'$CI_PROJECT_ROOT_NAMESPACE' , Project:#'$CI_PROJECT_NAME' ,Tag:#'$CI_COMMIT_TAG' \n Pipeline is Done!:heavy_check_mark:"}'
+    - curl -X POST -H "Content-type:application/json" --data "$ROCKET_HOOK" $R_WEBHOOK
+  only:
+    - /^v\d{1,9}\.\d{1,9}\.\d{1,9}-[r][e][l][e][a][s][e]$/
+  tags:
+    - build

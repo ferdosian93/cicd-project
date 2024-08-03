@@ -1,0 +1,103 @@
+#!/bin/bash
+# set parameter valuse
+#------------------------------------------------------------------------------
+echo "Enter your clone pwa address"
+read CLONE_ADDRESS
+REPOSITORY_NAME=$(echo $CLONE_ADDRESS | awk -F/ '{sub(/\.git$/, "", $(NF-0)); print $(NF-0)}')
+echo $REPOSITORY_NAME
+URL_WITHOUT_HTTPS="${CLONE_ADDRESS#https://}"
+echo $URL_WITHOUT_HTTPS
+echo "set your service-port"
+read SERVICE_PORT
+echo "set your target-port"
+read TARGET_PORT
+echo "Enter your username"
+read USER
+echo "Enter your password"
+stty -echo
+read PASS
+stty echo
+
+#------------------------------------------------------------------------------
+BASE_PATH=$(pwd)
+echo $BASE_PATH
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "cloning project .................................."
+echo "-----------------------------------------------------------------------------------------------"
+git clone -b ci-cd-automation https://$USER:$PASS@$URL_WITHOUT_HTTPS
+echo "-----------------------------------------------------------------------------------------------"
+echo "adding ci files .................................."
+echo "-----------------------------------------------------------------------------------------------"
+cp -r ci-frontend/ci $REPOSITORY_NAME
+cp -r ci-frontend/.gitlab-ci.yml $REPOSITORY_NAME
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++"
+ls -al $BASE_PATH/$REPOSITORY_NAME
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++"
+cd $BASE_PATH/$REPOSITORY_NAME/ci/k8s
+ls -al
+echo "-----------------------------------------------------------------------------------------------"
+echo "changing ci file names .................................."
+echo "-----------------------------------------------------------------------------------------------"
+for file in *; do
+    # Check if the file name contains "sample"
+    if [[ $file == *sample* ]]; then
+        # Replace "sample" with "sample" using parameter expansion
+        new_name="${file/sample/$REPOSITORY_NAME}"
+        echo "========================="
+        echo $new_name
+        echo "========================="
+        # Rename the file
+        mv "$file" "$new_name"
+        echo "Renamed: $file to $new_name"
+    fi
+done
+
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure service file .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/\(targetPort:\s*\).*/\1'" "${TARGET_PORT}'/' $BASE_PATH/$REPOSITORY_NAME/ci/k8s/$REPOSITORY_NAME-service.yaml
+sed -i 's/\(port:\s*\).*/\1'" "${SERVICE_PORT}'/' $BASE_PATH/$REPOSITORY_NAME/ci/k8s/$REPOSITORY_NAME-service.yaml
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure ingrss file .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/\(number:\s*\).*/\1'""${SERVICE_PORT}'/' $BASE_PATH/$REPOSITORY_NAME/ci/k8s/$REPOSITORY_NAME-ingress.yaml
+REPOSITORY_NAME_UNDERLINE_SEPERATOR=$(echo "$REPOSITORY_NAME" | sed 's/-/_/g')
+sed -i 's/\(path:\s*\).*/\1\/'"${REPOSITORY_NAME_UNDERLINE_SEPERATOR}"'/' "$BASE_PATH/$REPOSITORY_NAME/ci/k8s/$REPOSITORY_NAME-ingress.yaml"
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure Dockerfile .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/sample/'$REPOSITORY_NAME_UNDERLINE_SEPERATOR'/g' $BASE_PATH/$REPOSITORY_NAME/ci/docker/Dockerfile
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure Dockerfile_cache .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/sample/'$REPOSITORY_NAME_UNDERLINE_SEPERATOR'/g' $BASE_PATH/$REPOSITORY_NAME/ci/docker/Dockerfile_cache
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure entrypoint.sh .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/sample/'$REPOSITORY_NAME_UNDERLINE_SEPERATOR'/g' $BASE_PATH/$REPOSITORY_NAME/ci/docker/entrypoint.sh
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure nginx vhost default.conf .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/sample/'$REPOSITORY_NAME_UNDERLINE_SEPERATOR'/g' $BASE_PATH/$REPOSITORY_NAME/ci/nginx/vhosts/default.conf
+
+echo "-----------------------------------------------------------------------------------------------"
+echo "configure gitlab-ci.yml .................................."
+echo "-----------------------------------------------------------------------------------------------"
+
+sed -i 's/sample/'$REPOSITORY_NAME_UNDERLINE_SEPERATOR'/g' $BASE_PATH/$REPOSITORY_NAME/.gitlab-ci.yml
+
+
+#https://gitlab.tasn.ir/ap/pwa/frontend/ap-takhfifan.git

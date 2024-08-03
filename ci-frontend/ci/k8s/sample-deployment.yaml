@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: $CI_PROJECT_NAME
+    app.ap.deploy: $CI_PROJECT_NAME
+    version: $CI_COMMIT_TAG
+  name: $CI_PROJECT_NAME
+  namespace: $K8S_NAMESPACE
+spec:
+  replicas: $RPL
+  revisionHistoryLimit: $REV_HIST_LIM
+  selector:
+    matchLabels:
+      app.ap.deploy: $CI_PROJECT_NAME
+  template:
+    metadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundIPRanges: 192.168.71.0/24
+        traffic.sidecar.istio.io/excludeOutboundPorts: 6379, 6380, 27017, 1521, 1433, 3306, 5432
+      labels:
+        app: $CI_PROJECT_NAME
+        app.ap.deploy: $CI_PROJECT_NAME
+        version: $CI_COMMIT_TAG
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.ap.deploy
+                    operator: In
+                    values:
+                      - $CI_PROJECT_NAME
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - image: $REGISTRY_URL/$CI_PROJECT_PATH:$CI_COMMIT_TAG
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 10
+            periodSeconds: 2
+            successThreshold: 1
+            tcpSocket:
+              port: 80
+            timeoutSeconds: 2
+          name: $CI_PROJECT_NAME
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 10
+            periodSeconds: 2
+            successThreshold: 1
+            tcpSocket:
+              port: 80
+            timeoutSeconds: 2
+          resources:
+            limits:
+              cpu: "$RSRC_CPU_LIM"
+              memory: "$RSRC_MEM_LIM"
+            requests:
+              cpu: "$RSRC_CPU_REQ"
+              memory: "$RSRC_MEM_REQ"
+      imagePullSecrets:
+        - name: $CI_PROJECT_NAME-reg
+      restartPolicy: Always
